@@ -1,0 +1,21 @@
+---
+title: Coral_Gables
+authors:
+  - name: Robert Bremer
+    affiliation: University of Miami
+    roles: sampling, data analysis, writing
+    corresponding: true
+bibliography: references.bib
+---
+
+## Section
+This is a simple placeholder for the manuscript's main document [@knuth84].
+
+## Study Area
+'''{r}
+#| label: fig-Study Area
+#| fig-cap: "Coral Gables Waterway"
+#| warning: false
+
+
+'''

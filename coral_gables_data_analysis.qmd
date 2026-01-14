@@ -1,0 +1,675 @@
+---
+title: "Coral Gables Data Analysis"
+format: html
+
+---
+
+```{r Load Packages}
+library(languageserver)
+library(rmarkdown)
+library(tidyverse)
+library(readxl)
+library(janitor)
+library(writexl)
+library(ggplot2)
+library(lubridate)
+library(ComplexHeatmap)
+library(rnaturalearth)
+library(sf)
+library(stars)
+library(gstat)
+library(cartogram)
+library(ggforce)
+library(car)
+library(vegan)
+library(data.table)
+library(HTqPCR)
+library(purrr)
+library(readr)
+library(mi)
+library(mice)
+library(writexl)
+library(circlize)
+library(nhdplusTools)
+library(ggsignif)
+library(ggpubr)
+install.packages("FSA")
+library(FSA)
+install.packages("dataRetrieval")
+if (!require("BiocManager", quietly = TRUE))
+        install.packages("BiocManager")
+
+```
+
+```{r Faire Sheets fixes}
+faire_cgw <- read.csv("C:/Users/Robert.Bremer/Downloads/cgw_FAIRe - sampleMetadata.csv") %>%
+  mutate(across(everything(), na_if,y="")) %>%
+  row_to_names(2) %>%
+  remove_empty(which = "cols") %>%
+  select(-c("bottle_number")) %>%
+  mutate(project_number = as.numeric(project_number)) %>%
+  mutate(verbatimEventDate = as.Date(verbatimEventDate, format = "%m/%d/%Y")) %>%
+  mutate(field_dup = if_else(str_detect(samp_name, regex("dup", ignore_case = TRUE)), 1L, 0L)) %>%
+  left_join(., old_cgw_mst2, by=c("project_number", "site", "informal_depth"="depth", "verbatimEventDate"= "sample_collection_date", "field_dup"), relationship = "many-to-one") %>%
+  mutate(
+    season = case_when(
+      month(verbatimEventDate) %in% c(12, 1, 2) ~ "winter",
+      month(verbatimEventDate) %in% c(3, 4, 5)  ~ "spring",
+      month(verbatimEventDate) %in% c(6, 7, 8)  ~ "summer",
+      month(verbatimEventDate) %in% c(9, 10, 11) ~ "fall"
+  )) %>%
+  mutate(mei = as.numeric(coalesce(mei_plate_count_100ml,average_m_ei_plate_counts_100m_l))) %>%
+  mutate(mtec = as.numeric(coalesce(mtec_plate_count_100ml,e_coli_subsamples)))
+
+
+faire_cgw[53, c("project_number", "site", "informal_depth", "verbatimEventDate")]
+
+  
+old_cgw_mst <- read.csv("C:/Users/Robert.Bremer/Downloads/MARIBETH_Copy of CGWW_WQV Data logs final set_10-13-2021.xlsx - mEI Raw data.csv") %>%
+  row_to_names(1) %>%
+  clean_names() %>%
+  select(-c(na)) %>%
+  mutate(across(everything(), na_if, y="")) %>%
+  drop_na(sample_collection_date) %>%
+  drop_na(sample_site_description) %>%
+  mutate(project_number = 1) %>%
+  separate(sample_site_description, c("site","depth2"), sep = "_",remove=FALSE) %>%
+  mutate(sample_collection_date = str_replace_all(sample_collection_date,"/","-")) %>%
+  mutate(site = str_replace(site,"-",""))
+
+old_cgw_mst2 <- read.csv("C:/Users/Robert.Bremer/Downloads/old_cgw_mst.csv") %>%
+  select(-c("depth2")) %>%
+  mutate(sample_collection_date = as.Date(sample_collection_date, format = ("%m/%d/%Y")))
+
+old_cgw_mst2 %>%
+  filter(
+    project_number == 1,
+    site == "CG1",
+    depth == "surface",
+    sample_collection_date == "2020-10-14"
+  )
+
+?as.Date
+
+write.csv(faire_cgw,"C:/Users/Robert.Bremer/Downloads/cgw_FAIRe_edited20251222.csv")
+
+write.csv(old_cgw_mst, "C:/Users/Robert.Bremer/Downloads/old_cgw_mst.csv")
+```
+
+# 2021 Analysis
+```{r Load in nutrients 2021 dataset}
+nutrients2021 <- read_excel("C:/Users/Robert.Bremer/Downloads/CGW Nutrients and Chl-a_NOAA_submitted.xlsx") %>%
+  clean_names() %>%
+  separate(site, into = c("site", "inf_depth"), sep = "-") %>%
+  mutate(inf_depth = tolower(inf_depth)) %>%
+  mutate(collection_date = as.Date(collection_date)) %>%
+  mutate(across(10:19, as.numeric)) %>%
+  mutate(across(21:23, as.numeric)) %>%
+  mutate(collection_date = as.Date(collection_date)) %>%
+  mutate(
+    season = case_when(
+      month(collection_date) %in% c(12, 1, 2) ~ "winter",
+      month(collection_date) %in% c(3, 4, 5)  ~ "spring",
+      month(collection_date) %in% c(6, 7, 8)  ~ "summer",
+      month(collection_date) %in% c(9, 10, 11) ~ "fall"
+  ))
+
+nutrients2024 <- read.csv("C:/Users/Robert.Bremer/Downloads/CGWW23-24_data_wmicro_complete.xlsx - Sheet1.csv") %>%
+  clean_names()
+
+View(nutrients2021)
+```
+
+```{r Load in micro 2021 dataset}
+micro2021 <- read_excel("C:/Users/Robert.Bremer/Downloads/CGWS-WQ_sample Log_tube labels_v38_06-04-2022_RESULTS-ALL DATA_Extraction log.xlsx") %>%
+    row_to_names(2) %>%
+    clean_names() %>%
+    slice(-c(1,54,124,170,216,262,308,352,396,442,488)) %>%
+    rename(samp_name = sample_management_unique_bar_code_text) %>%
+    filter(samp_name != "not collected") %>%
+    rename(site = cgws_site_name) %>%
+    mutate(site = str_replace_all(site, "-","")) %>%
+    separate(site, into = c("site", "inf_depth"), sep = "_") %>%
+    rename(collection_date = sample_collection_date) %>%
+    mutate(collection_date = as.Date(collection_date, format = ("%m/%d/%Y"))) %>%
+    rename(mei_rep1 = m_ei_plate_counts_100m_l_triplicate_number_1) %>%
+    rename(mei_rep2 = m_ei_plate_counts_100m_l_triplicate_number_2) %>%
+    rename(mei_rep3 = m_ei_plate_counts_100m_l_triplicate_number_3) %>%
+    rename(mei_ave = average_enterococci_m_ei_plate_counts_100m_l) %>%
+    rename(ecoli = e_coli_m_tec_plate_counts_100m_l) %>%
+    rename(hf183_copies_100ml = hf183_human_bacteroides_q_pcr_copies_100m_l_sample_water) %>%
+    mutate(mei_ave = as.numeric(mei_ave)) %>%
+    mutate(hf183_copies_100ml = as.numeric(hf183_copies_100ml))
+
+View(micro2021)
+```
+
+```{r Load in Micro 2024 dataset}
+micro2024 <- read_excel("C:/Users/Robert.Bremer/Downloads/cgw_Faire.xlsx",sheet = "sampleMetadata") %>%
+  row_to_names(2) %>%
+  mutate(sample_number = as.numeric(sample_number))%>%
+  remove_empty("cols") %>%
+  mutate(mei_plate_count_100ml = as.numeric(mei_plate_count_100ml)) %>%
+  mutate(mtec_plate_count_100ml = as.numeric(mtec_plate_count_100ml)) %>%
+  mutate(verbatimEventDate = as.Date(verbatimEventDate)) %>%
+  mutate(
+    season = case_when(
+      month(verbatimEventDate) %in% c(12, 1, 2) ~ "winter",
+      month(verbatimEventDate) %in% c(3, 4, 5)  ~ "spring",
+      month(verbatimEventDate) %in% c(6, 7, 8)  ~ "summer",
+      month(verbatimEventDate) %in% c(9, 10, 11) ~ "fall"
+    ))
+
+e1a2024 <- read_excel("C:/Users/Robert.Bremer/Downloads/cgw_Faire.xlsx",sheet = "ampData - Entero1A") %>%
+  row_to_names(2) %>%
+  mutate(sample_number = as.numeric(sample_number)) %>%
+  left_join(., micro2024 %>% select(samp_name, sample_number, verbatimEventDate, site, season), by = "sample_number") %>%
+  select(-c(samp_name.x)) %>%
+  rename(samp_name = samp_name.y) %>%
+  relocate(samp_name, .before=sample_number) %>%
+  mutate(quantity_mean = as.numeric(quantity_mean))
+
+hf1832024 <- read_excel("C:/Users/Robert.Bremer/Downloads/cgw_Faire.xlsx",sheet = "ampData - HF183") %>%
+  row_to_names(2)%>%
+  mutate(sample_number = as.numeric(sample_number)) %>%
+  left_join(., micro2024 %>% select(samp_name, sample_number, verbatimEventDate, site, season), by = "sample_number") %>%
+  select(-c(samp_name.x)) %>%
+  rename(samp_name = samp_name.y) %>%
+  relocate(samp_name, .before=sample_number)%>%
+  mutate(quantity_mean = as.numeric(quantity_mean))
+
+dg32024 <- read_excel("C:/Users/Robert.Bremer/Downloads/cgw_Faire.xlsx",sheet = "ampData - DG3") %>%
+  row_to_names(2) %>%
+  mutate(sample_number = as.numeric(sample_number)) %>%
+  left_join(., micro2024 %>% select(samp_name, sample_number, verbatimEventDate, site, season), by = "sample_number") %>%
+  select(-c(samp_name.x)) %>%
+  rename(samp_name = samp_name.y) %>%
+  relocate(samp_name, .before=sample_number) %>%
+  mutate(quantity_mean = as.numeric(quantity_mean))
+
+
+write_xlsx(dg32024, "C:/Users/Robert.Bremer/Downloads/dg32024.xlsx")
+
+```
+
+
+```{r E1A}
+ggplot(e1a2024, aes(season, quantity_mean))+
+  geom_violin()+
+  geom_jitter(aes(color = season))+
+  scale_y_log10()+
+  #geom_hline(aes(yintercept = 1000, linetype = "1000 cpy/100ml"))+
+  scale_shape_manual(values = c(19,1))+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = -90, vjust = .5))+
+  labs(title = "Entero1A Quantity Mean", y = "log E1A quantity", x = "Sample Collection Date")+
+  scale_linetype_manual(name = "Hazard Limit", values = c(1))+
+  stat_compare_means(method = "kruskal.test", label.x = .75, label.y = 7)+  # Add the overall p-value
+  stat_compare_means(comparisons = list(c("fall","spring"),
+                                 c("fall","winter"),
+                                 c("fall","summer"),
+                                 c("winter","spring"),
+                                 c("winter","summer"),
+                                 c("spring","summer")))+
+  stat_summary(fun = "mean",
+               geom = "crossbar",
+               color = "red")
+  #            test = "kruskal-wallis")
+
+dunnTest(quantity_mean ~ season,
+         data=e1a2024,
+         method="bonferroni")
+
+```
+
+```{r HF 183}
+ggplot(hf1832024, aes(site, quantity_mean))+
+  geom_violin()+
+  geom_jitter(aes(color = season))+
+  scale_y_log10()+
+  #geom_hline(aes(yintercept = 1000, linetype = "1000 cpy/100ml"))+
+  scale_shape_manual(values = c(19,1))+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = -90, vjust = .5))+
+  labs(title = "HF183 Quantity Mean", y = "log HF183 quantity", x = "Sample Collection Date")+
+  scale_linetype_manual(name = "Hazard Limit", values = c(1))+
+  stat_compare_means(method = "kruskal.test", label.x = .75, label.y = 7)+  # Add the overall p-value
+  stat_compare_means(comparisons = list(c("fall","spring"),
+                                 c("fall","winter"),
+                                 c("fall","summer"),
+                                 c("winter","spring"),
+                                 c("winter","summer"),
+                                 c("spring","summer")))+
+  stat_summary(fun = "mean",
+               geom = "crossbar",
+               color = "blue")
+
+dunnTest(quantity_mean ~ site,
+         data=hf1832024,
+         method="bonferroni")
+  
+```
+
+```{r DG3}
+ggplot(dg32024, aes(season, quantity_mean))+
+  geom_violin()+
+  geom_jitter(aes(color = season))+
+  scale_y_log10()+
+  #geom_hline(aes(yintercept = 1000, linetype = "1000 cpy/100ml"))+
+  scale_shape_manual(values = c(19,1))+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = -90, vjust = .5))+
+  labs(title = "DG3 Quantity Mean", y = "log DG83 quantity", x = "Sample Collection Date")+
+  scale_linetype_manual(name = "Hazard Limit", values = c(1))+
+  stat_compare_means(method = "kruskal.test", label.x = .75, label.y = 7)+  # Add the overall p-value
+  stat_compare_means(comparisons = list(c("fall","spring"),
+                                 c("fall","winter"),
+                                 c("fall","summer"),
+                                 c("winter","spring"),
+                                 c("winter","summer"),
+                                 c("spring","summer")))+
+  stat_summary(fun = "mean",
+               geom = "crossbar",
+               color = "darkgreen")
+
+dunnTest(quantity_mean ~ site,
+         data=hf1832024,
+         method="bonferroni")
+
+```
+
+
+```{r Mei}
+
+ggplot(faire_cgw, aes(verbatimEventDate, mei))+
+  geom_violin()+
+  geom_point(aes(color = season))+
+  labs(title = "mEI")
+
+  stat_compare_means(method = "kruskal.test", label.x = .75, label.y = 570)+  # Add the overall p-value
+  stat_compare_means(comparisons = list(c("fall","spring"),
+                                 c("fall","winter"),
+                                 c("fall","summer"),
+                                 c("winter","spring"),
+                                 c("winter","summer"),
+                                 c("spring","summer")))+
+  stat_summary(fun = "mean",
+               geom = "crossbar",
+               color = "blue")
+
+ggplot(micro2024, aes(site, mei_plate_count_100ml))+
+  geom_violin()+
+  geom_point(aes(color = season))+
+  labs(title = "Mei 2024") +
+  stat_compare_means(method = "kruskal.test", label.x = .75, label.y = 570)  # Add the overall p-value
+
+
+```
+
+```{r MTEC}
+
+ggplot(faire_cgw, aes(verbatimEventDate, mtec))+
+  geom_violin()+
+  geom_point(aes(color = season))+
+  labs(title = "Mtec 2024")
+
+ggplot(faire_cgw, aes(season, mtec))+
+  geom_violin()+
+  geom_point(aes(color = season))+
+  labs(title = "Mtec 2024") 
+  stat_compare_means(method = "kruskal.test", label.x = .75, label.y = 570)+  # Add the overall p-value
+  stat_compare_means(comparisons = list(c("fall","spring"),
+                                 c("fall","winter"),
+                                 c("fall","summer"),
+                                 c("winter","spring"),
+                                 c("winter","summer"),
+                                 c("spring","summer")))+
+  stat_summary(fun = "mean",
+               geom = "crossbar",
+               color = "blue")
+
+```
+
+
+```{r Nutrients 2021}
+ggplot(nutrients2021, aes(site, si_u_m)) +
+  geom_violin()+
+  geom_jitter(aes(color = season))+
+  labs(title = "Silicates 2021")+
+  stat_summary(fun = "mean",
+               geom = "crossbar",
+               color = "blue")
+
+ggplot(nutrients2021, aes(season, si_u_m)) +
+  geom_violin()+
+  geom_jitter(aes(color = season))+
+  labs(title = "Silicates 2021") + 
+  stat_summary(fun = "mean",
+               geom = "crossbar",
+               color = "blue")
+
+ggplot(nutrients2021, aes(site, no2_u_m)) +
+  geom_violin()+
+  geom_jitter(aes(color = season))+
+  labs(title = "NO2 2021")+
+  stat_summary(fun = "mean",
+               geom = "crossbar",
+               color = "blue")+
+  stat_compare_means(method = "kruskal.test")  # Add the overall p-value
+
+
+ggplot(nutrients2021, aes(season, no2_u_m)) +
+  geom_violin()+
+  geom_jitter(aes(color = season))+
+  labs(title = "NO2 2021")+
+  stat_summary(fun = "mean",
+               geom = "crossbar",
+               color = "blue")+
+  stat_compare_means(method = "kruskal.test")  # Add the overall p-value
+
+ggplot(nutrients2021, aes(season, no3_u_m)) +
+  geom_violin()+
+  geom_jitter(aes(color = season))+
+  labs(title = "NO3 2021")+
+  stat_summary(fun = "mean",
+               geom = "crossbar",
+               color = "blue")+
+  stat_compare_means(method = "kruskal.test")  # Add the overall p-value
+
+ggplot(nutrients2021, aes(site, no3_u_m)) +
+  geom_violin()+
+  geom_jitter(aes(color = season))+
+  labs(title = "NO3 2021")+
+  stat_summary(fun = "mean",
+               geom = "crossbar",
+               color = "blue")+
+  stat_compare_means(method = "kruskal.test")  # Add the overall p-value
+
+ggplot(nutrients2021, aes(season, n_n_u_m)) +
+  geom_violin()+
+  geom_jitter(aes(color = season))+
+  labs(title = "NO2 + NO3 2021")+
+  stat_summary(fun = "mean",
+               geom = "crossbar",
+               color = "blue")+
+  stat_compare_means(method = "kruskal.test")  # Add the overall p-value
+
+ggplot(nutrients2021, aes(site, n_n_u_m)) +
+  geom_violin()+
+  geom_jitter(aes(color = season))+
+  labs(title = "NO2 + NO3 2021")+
+  stat_summary(fun = "mean",
+               geom = "crossbar",
+               color = "blue")+
+  stat_compare_means(method = "kruskal.test")  # Add the overall p-value
+
+ggplot(nutrients2021, aes(season, nh4_u_m)) +
+  geom_violin()+
+  geom_jitter(aes(color = season))+
+  labs(title = "NO2 + NO3 2021")+
+  stat_summary(fun = "mean",
+               geom = "crossbar",
+               color = "blue")+
+  stat_compare_means(method = "kruskal.test")  # Add the overall p-value
+
+ggplot(nutrients2021, aes(site, nh4_u_m)) +
+  geom_violin()+
+  geom_jitter(aes(color = season))+
+  labs(title = "NH4 2021")+
+  stat_summary(fun = "mean",
+               geom = "crossbar",
+               color = "blue")+
+  stat_compare_means(method = "kruskal.test")  # Add the overall p-value
+
+ggplot(nutrients2021, aes(season, avg_chl_a_ug_l)) +
+  geom_violin()+
+  geom_jitter(aes(color = season))+
+  labs(title = "NH4 2021")+
+  stat_summary(fun = "mean",
+               geom = "crossbar",
+               color = "blue")+
+  stat_compare_means(method = "kruskal.test")  # Add the overall p-value
+
+ggplot(nutrients2021, aes(site, po4_u_m)) +
+  geom_violin()+
+  geom_jitter(aes(color = season))+
+  labs(title = "PO4 2021")+
+  stat_summary(fun = "mean",
+               geom = "crossbar",
+               color = "blue")+
+  stat_compare_means(method = "kruskal.test")  # Add the overall p-value
+
+ggplot(nutrients2021, aes(season, po4_u_m)) +
+  geom_violin()+
+  geom_jitter(aes(color = season))+
+  labs(title = "PO4 2021")+
+  stat_summary(fun = "mean",
+               geom = "crossbar",
+               color = "blue")+
+  stat_compare_means(method = "kruskal.test")  # Add the overall p-value
+
+ggplot(nutrients2021, aes(site, din_u_m)) +
+  geom_violin()+
+  geom_jitter(aes(color = season))+
+  labs(title = "DIN 2021")+
+  stat_summary(fun = "mean",
+               geom = "crossbar",
+               color = "blue")+
+  stat_compare_means(method = "kruskal.test")  # Add the overall p-value
+
+ggplot(nutrients2021, aes(season, din_u_m)) +
+  geom_violin()+
+  geom_jitter(aes(color = season))+
+  labs(title = "DIN 2021")+
+  stat_summary(fun = "mean",
+               geom = "crossbar",
+               color = "blue")+
+  stat_compare_means(method = "kruskal.test")  # Add the overall p-value
+
+ggplot(nutrients2021, aes(site, tdp_u_m)) +
+  geom_violin()+
+  geom_jitter(aes(color = season))+
+  labs(title = "TDP 2021")+
+  stat_summary(fun = "mean",
+               geom = "crossbar",
+               color = "blue")+
+  stat_compare_means(method = "kruskal.test")  # Add the overall p-value
+
+ggplot(nutrients2021, aes(season, tdp_u_m)) +
+  geom_violin()+
+  geom_jitter(aes(color = season))+
+  labs(title = "TDP 2021")+
+  stat_summary(fun = "mean",
+               geom = "crossbar",
+               color = "blue")+
+  stat_compare_means(method = "kruskal.test")  # Add the overall p-value
+
+ggplot(nutrients2021, aes(site, avg_chl_a_ug_l)) +
+  geom_violin()+
+  geom_jitter(aes(color = season))+
+  labs(title = "Chl-a 2021")+
+  stat_summary(fun = "mean",
+               geom = "crossbar",
+               color = "blue")+
+  stat_compare_means(method = "kruskal.test")  # Add the overall p-value
+
+ggplot(nutrients2021, aes(season, avg_chl_a_ug_l)) +
+  geom_violin()+
+  geom_jitter(aes(color = season))+
+  labs(title = "Chl-a 2021")+
+  stat_summary(fun = "mean",
+               geom = "crossbar",
+               color = "blue")+
+  stat_compare_means(method = "kruskal.test")  # Add the overall p-value
+
+```
+```{r Nutrients Spearman}
+iv <- nutrients2024 %>% select(air_temp_c, water_temp_c, do, salinity_ppt, p_h)
+dv <- nutrients2024 %>% select(chl_a_lab_ug_l,pheophytin_ug_l)
+
+cor_matrix <- cor(
+  dv,
+  iv,
+  method = "spearman",
+  use = "pairwise.complete.obs"
+)
+
+cor_matrix
+
+
+```
+
+
+```{r Multiple Imputation}
+BiocManager::install("nondetects")
+library(nondetects)
+browseVignettes("nondetects")
+library(HTqPCR)
+browseVignettes("HTqPCR")
+data("oncogene2013")
+ls("package:HTqPCR")
+?qpcrImpute
+
+#Example data has a file that contains the names of the other 6 sample files.txt to read in
+path <- system.file("exData", package = "HTqPCR")
+files <- read.delim(file.path(path, "files.txt"))
+raw <- readCtData(files = files$File, path = path)
+show(raw)
+
+
+#This is what one of the example files looks like
+example_sample1<-(read.delim(file.path(path, "sample1.txt")))
+
+#Ct overview of the example dataset
+g <- featureNames(raw)[1:10]
+plotCtOverview(raw, genes = g, xlim = c(0, 50), groups = files$Treatment, 
+                 conf.int = TRUE, ylim = c(0, 55))
+
+plotCtOverview(raw, genes = g, xlim = c(0, 50), groups = files$Treatment,
+               calibrator = "Control")
+
+?plotCtOverview
+# Trying on my real data
+
+e1a_set<- e1a2024 %>%
+  rename(sample = samp_name) %>%
+  rename(cq = quantificationCycle)
+
+write_xlsx(e1a_set, "C:/Users/Robert.Bremer/Downloads/e1a_set.xlsx")
+e1a_set <- readCTData(e1a_set, format = "SDS")
+
+
+# Making one manually
+ct_matrix <- e1a2024 %>%
+  select(samp_name,assay_name, quantificationCycle) %>%
+  pivot_wider(names_from = samp_name, values_from = quantificationCycle) %>%
+  column_to_rownames("assay_name")
+
+# Create the HTqPCR object manually
+qPCR <- new("qPCRset", exprs = as.matrix(ct_matrix))
+sampleNames(qPCR)
+
+# Moving to qpcrImpute with package nondetects:
+class(qPCR)
+dim(exprs(qPCR))
+head(exprs(qPCR))
+
+featureNames(qPCR)
+
+
+exprs(qPCR) <- as.matrix(exprs(qPCR))
+rownames(exprs(qPCR)) <- featureNames(qPCR) <- "assay_1"  # give your assay a name
+
+imputed <- qpcrImpute(
+  qPCR
+)
+
+??nondetects
+??qpcrImpute
+?changeCtLayout
+??multiple.impute
+
+show(e1a_set)
+fData(e1a_set)
+e1a_set
+?readCtData
+plotCtOverview(e1a_set, genes=e1a, xlim=c(0,50), groups=files$Treatment, conf.int=TRUE,
+ylim=c(0,55))
+
+?readCtData
+imputation_file<- "C:/Users/Robert.Bremer/Downloads/R_supplement.tar.gz"
+supplement <- untar(imputation_file, list = TRUE)
+supplement
+view(supplement)
+```
+
+```{r Map}
+# example lat long coordinates in EPSG 4326
+simple_coords <- tibble::tibble(
+  lat = -80.25,
+  lon = 25.74
+)
+
+# convert coordinates to spatial feature
+location_sf <- sf::st_as_sf(simple_coords,
+                            coords = c("lat", "lon"),
+                            crs = 4326) |>
+  # make sure it's projected nicely for plotting
+  sf::st_transform(crs = 5070)
+
+location_sf <- st_transform(location_sf, 4269)
+
+# add buffer
+location_buffer <- sf::st_buffer(location_sf, 
+                                 endCapStyle = "SQUARE",
+                                 dist = 130000) # distance in meters
+
+# query NHD for flowlines (non high resolution) in buffered area
+location_nhd <- nhdplusTools::get_nhdplus(AOI = location_buffer, 
+                                          realization = "flowline")
+
+
+?get_nhdplushr
+
+location_nhd_wb <- nhdplusTools::get_waterbodies(AOI = location_buffer)
+
+# default ggplot2 map
+ggplot(data = location_nhd) +
+  geom_sf() +
+  geom_sf(data = location_nhd_wb) +
+  geom_sf(data = location_sf, color = "white", fill = "black",
+  shape = 21, stroke = 1, size = 3) 
+  
+# update map by adding nice colors and line thicknesses
+ggplot() +
+  # hydrolines: map stream order categories to factor labels
+  geom_sf(
+    data = location_nhd,
+    aes(
+      linewidth = factor(case_when(
+        streamorde >= 5 ~ "major",   
+        streamorde == 4 ~ "large",
+        streamorde == 3 ~ "medium",
+        TRUE ~ "small"))
+      ),
+    color = "blue") +
+  # assign linewidth values using `scale_linewidth_manual()`
+  scale_linewidth_manual(
+    values = c(
+      major = 0.3,
+      large = 0.2,
+      medium = 0.1,
+      small = 0.04),
+  # hide legend
+    guide = "none") +
+  # water bodies
+  geom_sf(data = location_nhd_wb, color = "lightblue",
+    fill  = "darkblue", linewidth = 0.01) +
+  # dot in the middle for our main location of interest
+  geom_sf(data = location_sf, color = "white", fill = "black",
+  shape = 21, stroke = 1, size = 3) +
+  theme_void()
+
+```
+
+
