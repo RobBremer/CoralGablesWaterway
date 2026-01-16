@@ -1,5 +1,10 @@
 {
   "index.qmd": {
     "index.html": "185389a9"
+  },
+  "coral_gables_data_analysis.qmd": {
+    "coral_gables_data_analysis.embed.ipynb": "8e588a93",
+    "coral_gables_data_analysis.out.ipynb": "47d07ad6",
+    "coral_gables_data_analysis-preview.html": "a35a92d6"
   }
 }

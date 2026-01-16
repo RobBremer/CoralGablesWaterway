@@ -17,5 +17,9 @@ format:
 execute:
   freeze: true
 
+r:
+  rpath:
+    windows: "C:/Program Files/R/R-4.3.2/bin/R.exe"
+
 
 

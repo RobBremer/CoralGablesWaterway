@@ -1,11 +1,5 @@
 ---
 title: "Coral Gables Data Analysis"
-authors:
-  - name: Robert Bremer
-  - affiliation: University of Miami CIMAS, NOAA-AOML
-  - roles: writing, data analysis, sample collection
-  - corresponding: true
-bibliography: references.bib
 format: html
 
 ---
@@ -14,7 +8,7 @@ format: html
 #| output: false
 options(repos = c(CRAN = "https://cloud.r-project.org"))
 
-library(httpgd)
+
 library(languageserver)
 library(rmarkdown)
 library(tidyverse)
@@ -53,7 +47,6 @@ if (!require("BiocManager", quietly = TRUE))
 ```{r Faire Sheets fixes}
 #| echo: FALSE
 #| warning: false
-
 old_cgw_mst <- read.csv("C:/Users/Robert.Bremer/Downloads/MARIBETH_Copy of CGWW_WQV Data logs final set_10-13-2021.xlsx - mEI Raw data.csv") %>%
   row_to_names(1) %>%
   clean_names() %>%
@@ -67,10 +60,8 @@ old_cgw_mst <- read.csv("C:/Users/Robert.Bremer/Downloads/MARIBETH_Copy of CGWW_
   mutate(site = str_replace(site,"-",""))
 
 old_cgw_mst2 <- read.csv("C:/Users/Robert.Bremer/Downloads/old_cgw_mst.csv") %>%
-  select(-c("depth2","X")) %>%
-  mutate(sample_collection_date = as.Date(sample_collection_date, format = ("%m/%d/%Y"))) %>%
-  mutate(average_m_ei_plate_counts_100m_l = as.numeric(average_m_ei_plate_counts_100m_l)) %>%
-  mutate(e_coli_subsamples = as.numeric(e_coli_subsamples))
+  select(-c("depth2")) %>%
+  mutate(sample_collection_date = as.Date(sample_collection_date, format = ("%m/%d/%Y")))
 
 old_cgw_mst2 %>%
   filter(
@@ -80,8 +71,6 @@ old_cgw_mst2 %>%
     sample_collection_date == "2020-10-14"
   )
 
-view(old_cgw_mst2)
-
 faire_cgw <- read.csv("C:/Users/Robert.Bremer/Downloads/cgw_FAIRe - sampleMetadata.csv") %>%
   mutate(across(everything(), na_if,y="")) %>%
   row_to_names(2) %>%
@@ -90,7 +79,7 @@ faire_cgw <- read.csv("C:/Users/Robert.Bremer/Downloads/cgw_FAIRe - sampleMetada
   mutate(project_number = as.numeric(project_number)) %>%
   mutate(verbatimEventDate = as.Date(verbatimEventDate, format = "%m/%d/%Y")) %>%
   mutate(field_dup = if_else(str_detect(samp_name, regex("dup", ignore_case = TRUE)), 1L, 0L)) %>%
-  left_join(., old_cgw_mst2, by=c("project_number", "site", "informal_depth"="depth", "verbatimEventDate"= "sample_collection_date","field_dup"), relationship = "many-to-one") %>%
+  left_join(., old_cgw_mst2, by=c("project_number", "site", "informal_depth"="depth", "verbatimEventDate"= "sample_collection_date"), relationship = "many-to-one") %>%
   mutate(
     season = case_when(
       month(verbatimEventDate) %in% c(12, 1, 2) ~ "winter",
@@ -98,13 +87,17 @@ faire_cgw <- read.csv("C:/Users/Robert.Bremer/Downloads/cgw_FAIRe - sampleMetada
       month(verbatimEventDate) %in% c(6, 7, 8)  ~ "summer",
       month(verbatimEventDate) %in% c(9, 10, 11) ~ "fall"
   )) %>%
-  mutate(mei_plate_count_100ml = as.numeric(mei_plate_count_100ml))%>%
-  mutate(mtec_plate_count_100ml = as.numeric(mtec_plate_count_100ml))%>%
   mutate(mei = as.numeric(coalesce(mei_plate_count_100ml,average_m_ei_plate_counts_100m_l))) %>%
-  mutate(mtec = as.numeric(coalesce(mtec_plate_count_100ml,e_coli_subsamples)))%>%
-  subset(select=c(samp_name, verbatimEventDate,sample_numb,replicate,site,informal_depth,season,mei,mtec, field_dup))
+  mutate(mtec = as.numeric(coalesce(mtec_plate_count_100ml,e_coli_subsamples)))
 
-view(faire_cgw)
+
+faire_cgw[53, c("project_number", "site", "informal_depth", "verbatimEventDate")]
+
+  
+
+
+
+
 
 ```
 
@@ -127,20 +120,9 @@ nutrients2021 <- read_excel("C:/Users/Robert.Bremer/Downloads/CGW Nutrients and 
   ))
 
 nutrients2024 <- read.csv("C:/Users/Robert.Bremer/Downloads/CGWW23-24_data_wmicro_complete.xlsx - Sheet1.csv") %>%
-  clean_names() %>%
-  mutate(field_dup = case_when(str_detect(site_id,"FD-")~1,
-  TRUE ~0)) %>%
-  mutate(site_id = str_replace(site_id,"FD-",""))%>%
-  separate(site_id, into = c("site","inf_depth"),sep = "-") %>%
-  mutate(inf_depth = str_replace(inf_depth,"B","bottom")) %>%
-  mutate(inf_depth = str_replace(inf_depth,"S","surface")) %>%
-  mutate(date = as.Date(date, format =("%m/%d/%Y")))
+  clean_names()
 
-?separate
-
-view(nutrients2021)
-view(nutrients2024)
-view(faire_cgw2)
+View(nutrients2021)
 ```
 
 ```{r Load in micro 2021 dataset}
@@ -211,16 +193,9 @@ dg32024 <- read_excel("C:/Users/Robert.Bremer/Downloads/cgw_Faire.xlsx",sheet = 
   mutate(quantity_mean = as.numeric(quantity_mean))
 
 
+
 ```
 
-```{r Load Nutrients into faire_cgw}
-faire_cgw2 <- faire_cgw %>%
-left_join(nutrients2021, by = c("verbatimEventDate"= "collection_date","site","informal_depth"="inf_depth","season")) %>%
-select(-c(unique_identifier, nutrient_bottle_number,sample_team,notes,x7,nutrient_analysis_date,x16,nutrient_qc_notes,chl_a_qc_notes,other_notes)) %>%
-left_join(nutrients2024, by = c("verbatimEventDate"= "date","site","informal_depth"="inf_depth", "field_dup","si_u_m","no2_u_m","no3_u_m","nh4_u_m","po4_u_m","din_u_m","tdp_u_m"))
-
-view(faire_cgw2)
-```
 
 ```{r E1A}
 ggplot(e1a2024, aes(season, quantity_mean))+
@@ -252,7 +227,7 @@ dunnTest(quantity_mean ~ season,
 ```
 
 ```{r HF 183}
-ggplot(hf1832024, aes(season, quantity_mean))+
+ggplot(hf1832024, aes(site, quantity_mean))+
   geom_violin()+
   geom_jitter(aes(color = season))+
   scale_y_log10()+
@@ -341,7 +316,7 @@ ggplot(faire_cgw, aes(season, mtec))+
 
 
 ```{r Nutrients 2021}
-ggplot(faire_cgw2, aes(site, si_u_m)) +
+ggplot(nutrients2021, aes(site, si_u_m)) +
   geom_violin()+
   geom_jitter(aes(color = season))+
   labs(title = "Silicates 2021")+
@@ -349,7 +324,7 @@ ggplot(faire_cgw2, aes(site, si_u_m)) +
                geom = "crossbar",
                color = "blue")
 
-ggplot(faire_cgw2, aes(season, si_u_m)) +
+ggplot(nutrients2021, aes(season, si_u_m)) +
   geom_violin()+
   geom_jitter(aes(color = season))+
   labs(title = "Silicates 2021") + 
@@ -357,7 +332,7 @@ ggplot(faire_cgw2, aes(season, si_u_m)) +
                geom = "crossbar",
                color = "blue")
 
-ggplot(faire_cgw2, aes(site, no2_u_m)) +
+ggplot(nutrients2021, aes(site, no2_u_m)) +
   geom_violin()+
   geom_jitter(aes(color = season))+
   labs(title = "NO2 2021")+
@@ -367,7 +342,7 @@ ggplot(faire_cgw2, aes(site, no2_u_m)) +
   stat_compare_means(method = "kruskal.test")  # Add the overall p-value
 
 
-ggplot(faire_cgw2, aes(season, no2_u_m)) +
+ggplot(nutrients2021, aes(season, no2_u_m)) +
   geom_violin()+
   geom_jitter(aes(color = season))+
   labs(title = "NO2 2021")+
@@ -376,7 +351,7 @@ ggplot(faire_cgw2, aes(season, no2_u_m)) +
                color = "blue")+
   stat_compare_means(method = "kruskal.test")  # Add the overall p-value
 
-ggplot(faire_cgw2, aes(season, no3_u_m)) +
+ggplot(nutrients2021, aes(season, no3_u_m)) +
   geom_violin()+
   geom_jitter(aes(color = season))+
   labs(title = "NO3 2021")+
@@ -385,7 +360,7 @@ ggplot(faire_cgw2, aes(season, no3_u_m)) +
                color = "blue")+
   stat_compare_means(method = "kruskal.test")  # Add the overall p-value
 
-ggplot(faire_cgw2, aes(site, no3_u_m)) +
+ggplot(nutrients2021, aes(site, no3_u_m)) +
   geom_violin()+
   geom_jitter(aes(color = season))+
   labs(title = "NO3 2021")+
@@ -394,7 +369,7 @@ ggplot(faire_cgw2, aes(site, no3_u_m)) +
                color = "blue")+
   stat_compare_means(method = "kruskal.test")  # Add the overall p-value
 
-ggplot(faire_cgw2, aes(season, n_n_u_m)) +
+ggplot(nutrients2021, aes(season, n_n_u_m)) +
   geom_violin()+
   geom_jitter(aes(color = season))+
   labs(title = "NO2 + NO3 2021")+
@@ -403,7 +378,7 @@ ggplot(faire_cgw2, aes(season, n_n_u_m)) +
                color = "blue")+
   stat_compare_means(method = "kruskal.test")  # Add the overall p-value
 
-ggplot(faire_cgw2, aes(site, n_n_u_m)) +
+ggplot(nutrients2021, aes(site, n_n_u_m)) +
   geom_violin()+
   geom_jitter(aes(color = season))+
   labs(title = "NO2 + NO3 2021")+
