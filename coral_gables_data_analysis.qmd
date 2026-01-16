@@ -136,7 +136,6 @@ nutrients2024 <- read.csv("C:/Users/Robert.Bremer/Downloads/CGWW23-24_data_wmicr
   mutate(inf_depth = str_replace(inf_depth,"S","surface")) %>%
   mutate(date = as.Date(date, format =("%m/%d/%Y")))
 
-?separate
 
 view(nutrients2021)
 view(nutrients2024)
